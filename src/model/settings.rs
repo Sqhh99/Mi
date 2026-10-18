@@ -8,6 +8,15 @@ use player_core::settings::Settings;
 
 const SAVE_DELAY: Duration = Duration::from_millis(400);
 
+/// Where settings and the library index live. `MI_CONFIG_DIR` overrides the per-user
+/// directory, e.g. to try the app without touching one's own settings.
+pub fn config_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("MI_CONFIG_DIR").filter(|dir| !dir.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    directories::ProjectDirs::from("com", "sqhh99", "Mi").map(|dirs| dirs.config_dir().to_path_buf())
+}
+
 pub struct SettingsModel {
     settings: Settings,
     path: Option<PathBuf>,
@@ -17,9 +26,8 @@ pub struct SettingsModel {
 impl SettingsModel {
     /// Loads settings from the per-user config directory, falling back to defaults.
     pub fn load() -> Self {
-        let path = directories::ProjectDirs::from("com", "sqhh99", "Mi")
-            .map(|dirs| dirs.config_dir().join("settings.json"));
-        let mut settings = match path.as_deref().map(Settings::load) {
+        let path = config_dir().map(|dir| dir.join("settings.json"));
+        let settings = match path.as_deref().map(Settings::load) {
             Some(Ok(settings)) => settings,
             Some(Err(err)) => {
                 log::warn!("ignoring unreadable settings: {err}");
@@ -27,7 +35,6 @@ impl SettingsModel {
             }
             None => Settings::default(),
         };
-        settings.playlist.retain(|track| track.is_file());
         if let Some(path) = &path {
             log::info!("settings file: {}", path.display());
         }

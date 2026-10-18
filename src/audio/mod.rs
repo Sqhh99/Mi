@@ -3,25 +3,56 @@
 
 mod engine;
 mod eq_source;
+mod gapless;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 pub use eq_source::EqParams;
+use player_core::track::ReplayGainMode;
 
 /// Identifies one load request so stale events from a previous track can be ignored.
 pub type LoadId = u64;
 
 #[derive(Debug)]
 pub enum AudioCommand {
-    Load { path: PathBuf, id: LoadId, autoplay: bool },
+    /// Plays `path`, starting at `start`.
+    Load {
+        path: PathBuf,
+        id: LoadId,
+        autoplay: bool,
+        start: Duration,
+    },
+    /// Prepares `path` to follow the current track without a gap.
+    Preload {
+        path: PathBuf,
+        id: LoadId,
+    },
+    CancelPreload,
     Play,
     Pause,
     Stop,
     Seek(Duration),
     SetVolume(f32),
+    SetReplayGain {
+        mode: ReplayGainMode,
+        preamp_db: f32,
+    },
+    /// Output device by name (`None` = system default); takes effect on the next load.
+    SetDevice(Option<String>),
     Shutdown,
+}
+
+/// Why a track could not be played.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadError {
+    /// The file no longer exists (moved, renamed or on a disconnected drive).
+    Missing,
+    /// The file exists but can't be opened or decoded.
+    Unreadable(String),
+    /// No audio output is available; not the track's fault.
+    Device(String),
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +63,17 @@ pub enum AudioEvent {
     },
     LoadFailed {
         id: LoadId,
+        error: LoadError,
+    },
+    /// The preloaded track `id` took over from track `from` without a gap.
+    Advanced {
+        from: LoadId,
+        id: LoadId,
+        duration: Option<Duration>,
+    },
+    PreloadFailed {
+        id: LoadId,
+        error: LoadError,
     },
     Position {
         id: LoadId,
@@ -44,8 +86,8 @@ pub enum AudioEvent {
     TrackEnded {
         id: LoadId,
     },
-    /// The output device could not be opened; playback is unavailable.
-    DeviceError(String),
+    /// The output device went away during playback (e.g. headphones unplugged).
+    DeviceLost(String),
 }
 
 /// Cheap, cloneable handle to the audio thread.
@@ -74,4 +116,9 @@ impl AudioHandle {
     pub fn set_eq(&self, gains_db: [f32; 3]) {
         self.eq.set(gains_db);
     }
+}
+
+/// Names of the available output devices. Blocking; call from a background thread.
+pub fn output_devices() -> Vec<String> {
+    engine::output_device_names()
 }

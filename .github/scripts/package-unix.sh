@@ -35,6 +35,20 @@ if [[ "$platform" == linux ]]; then
     fi
     cp "$binary" "$payload/Mi"
     chmod +x "$payload/Mi"
+    # A launcher entry that offers Mi for audio files; see the README for installing it.
+    cp "$repo_root/resources/appIcon.png" "$payload/mi.png"
+    cat > "$payload/mi.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Mi
+Comment=Local music player with synchronized lyrics
+Exec=Mi %F
+Icon=mi
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/wav;audio/x-wav;audio/mp4;audio/x-m4a;audio/aac;audio/ogg;audio/x-vorbis+ogg;
+StartupWMClass=com.sqhh99.Mi
+EOF
     asset="$package_name.tar.gz"
     tar -czf "$dist/$asset" -C "$stage" "$package_name"
     (cd "$dist" && sha256sum "$asset" > "$asset.sha256")
@@ -81,6 +95,24 @@ else
     <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
     <key>LSMinimumSystemVersion</key><string>$deployment_target</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Audio file</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.mp3</string>
+                <string>org.xiph.flac</string>
+                <string>com.microsoft.waveform-audio</string>
+                <string>public.mpeg-4-audio</string>
+                <string>public.aac-audio</string>
+                <string>org.xiph.ogg-audio</string>
+                <string>public.audio</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 EOF

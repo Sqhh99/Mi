@@ -8,6 +8,7 @@
 //! procedure, which then needs the app state. They must therefore never run while the app
 //! is borrowed (inside an `update` or event handler); use [`NativeWindow::defer`].
 
+pub mod media_controls;
 pub mod single_instance;
 pub mod tray;
 

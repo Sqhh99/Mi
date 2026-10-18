@@ -69,6 +69,63 @@ impl EqLevels {
     }
 }
 
+/// Ready-made curves for the three bands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EqPreset {
+    Flat,
+    BassBoost,
+    Vocal,
+    TrebleBoost,
+    Rock,
+    Pop,
+    Soft,
+    Electronic,
+}
+
+impl EqPreset {
+    pub const ALL: [EqPreset; 8] = [
+        EqPreset::Flat,
+        EqPreset::BassBoost,
+        EqPreset::Vocal,
+        EqPreset::TrebleBoost,
+        EqPreset::Rock,
+        EqPreset::Pop,
+        EqPreset::Soft,
+        EqPreset::Electronic,
+    ];
+
+    pub fn levels(self) -> EqLevels {
+        let (bass, mid, treble) = match self {
+            EqPreset::Flat => (50, 50, 50),
+            EqPreset::BassBoost => (75, 50, 50),
+            EqPreset::Vocal => (42, 67, 54),
+            EqPreset::TrebleBoost => (50, 50, 75),
+            EqPreset::Rock => (67, 42, 65),
+            EqPreset::Pop => (58, 62, 56),
+            EqPreset::Soft => (54, 50, 38),
+            EqPreset::Electronic => (70, 46, 62),
+        };
+        EqLevels { bass, mid, treble }
+    }
+
+    /// The preset these levels are exactly, if any.
+    pub fn matching(levels: EqLevels) -> Option<EqPreset> {
+        Self::ALL.into_iter().find(|preset| preset.levels() == levels)
+    }
+}
+
+/// "+3.4 dB", "−6.0 dB" or "0 dB" for a slider level.
+pub fn format_db(level: u8) -> String {
+    let db = level_to_db(level);
+    if db.abs() < 0.05 {
+        "0 dB".to_string()
+    } else if db > 0.0 {
+        format!("+{db:.1} dB")
+    } else {
+        format!("\u{2212}{:.1} dB", -db)
+    }
+}
+
 pub fn level_to_db(level: u8) -> f32 {
     (level.min(LEVEL_MAX) as f32 - LEVEL_FLAT as f32) / LEVEL_FLAT as f32 * MAX_GAIN_DB
 }
@@ -246,6 +303,17 @@ mod tests {
 
     fn db(gain: f32) -> f32 {
         20.0 * gain.log10()
+    }
+
+    #[test]
+    fn presets_and_labels() {
+        assert_eq!(EqPreset::Flat.levels(), EqLevels::default());
+        assert_eq!(EqPreset::matching(EqPreset::Rock.levels()), Some(EqPreset::Rock));
+        assert_eq!(EqPreset::matching(EqLevels { bass: 1, mid: 2, treble: 3 }), None);
+        assert!(EqPreset::ALL.iter().all(|p| p.levels().clamped() == p.levels()));
+        assert_eq!(format_db(50), "0 dB");
+        assert_eq!(format_db(75), "+6.0 dB");
+        assert_eq!(format_db(0), "\u{2212}12.0 dB");
     }
 
     #[test]

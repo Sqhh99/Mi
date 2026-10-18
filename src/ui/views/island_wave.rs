@@ -1,11 +1,13 @@
 //! The five-bar "bouncing peak" indicator shown in the dynamic island.
+//!
+//! It only bounces while the island is on screen and "reduce motion" is off.
 
 use std::time::Duration;
 
 use gpui::{Context, Entity, IntoElement, ParentElement, Render, Styled, Task, Window, div, px};
 use player_core::easing;
 
-use crate::model::PlayerModel;
+use crate::model::{PlayerModel, SettingsModel};
 use crate::ui::anim::Tween;
 use crate::ui::theme::Theme;
 
@@ -21,6 +23,10 @@ pub const BUBBLE_SIZE: (f32, f32) = (44.0, 24.0);
 
 pub struct IslandWave {
     playing: bool,
+    /// The island is the current mode.
+    shown: bool,
+    window_visible: bool,
+    reduce_motion: bool,
     active: usize,
     forward: bool,
     heights: [Tween; BAR_COUNT],
@@ -28,16 +34,32 @@ pub struct IslandWave {
 }
 
 impl IslandWave {
-    pub fn new(player: &Entity<PlayerModel>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        player: &Entity<PlayerModel>,
+        settings: &Entity<SettingsModel>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(player, |this, player, cx| {
             let playing = player.read(cx).is_playing();
             if playing != this.playing {
-                this.set_playing(playing, cx);
+                this.playing = playing;
+                this.update_pulse(cx);
+            }
+        })
+        .detach();
+        cx.observe(settings, |this, settings, cx| {
+            let reduce_motion = settings.read(cx).get().ui.reduce_motion;
+            if reduce_motion != this.reduce_motion {
+                this.reduce_motion = reduce_motion;
+                this.update_pulse(cx);
             }
         })
         .detach();
         Self {
             playing: false,
+            shown: false,
+            window_visible: true,
+            reduce_motion: settings.read(cx).get().ui.reduce_motion,
             active: 0,
             forward: true,
             heights: [Tween::settled(IDLE); BAR_COUNT],
@@ -45,12 +67,30 @@ impl IslandWave {
         }
     }
 
-    fn set_playing(&mut self, playing: bool, cx: &mut Context<Self>) {
-        self.playing = playing;
+    pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if shown != self.shown {
+            self.shown = shown;
+            self.update_pulse(cx);
+        }
+    }
+
+    pub fn set_window_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if visible != self.window_visible {
+            self.window_visible = visible;
+            self.update_pulse(cx);
+        }
+    }
+
+    fn bouncing(&self) -> bool {
+        self.playing && self.shown && self.window_visible && !self.reduce_motion
+    }
+
+    fn update_pulse(&mut self, cx: &mut Context<Self>) {
+        let bouncing = self.bouncing();
         self.active = 0;
         self.forward = true;
         self.retarget();
-        self._pulse = playing.then(|| {
+        self._pulse = bouncing.then(|| {
             cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(STEP).await;
@@ -80,13 +120,17 @@ impl IslandWave {
     }
 
     fn retarget(&mut self) {
+        let bouncing = self.bouncing();
+        // Without motion a playing island shows a still "peak" so its state stays readable.
+        let still = self.playing && !bouncing;
         for (i, tween) in self.heights.iter_mut().enumerate() {
-            let height = match (self.playing, i.abs_diff(self.active)) {
-                (false, _) => IDLE,
-                (true, 0) => PEAK,
-                (true, 1) => MID,
-                _ => IDLE,
-            };
+            let height =
+                match (bouncing || still, i.abs_diff(if still { BAR_COUNT / 2 } else { self.active })) {
+                    (false, _) => IDLE,
+                    (true, 0) => PEAK,
+                    (true, 1) => MID,
+                    _ => IDLE,
+                };
             tween.animate_to(height, MORPH, easing::in_out_quad);
         }
     }

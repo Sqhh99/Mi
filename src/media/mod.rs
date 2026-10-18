@@ -2,15 +2,18 @@
 //!
 //! Everything here is blocking file I/O and is meant to run on a background executor.
 
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use gpui::ImageFormat;
 use lofty::config::ParseOptions;
+use lofty::file::TaggedFile;
 use lofty::picture::{Picture, PictureType};
 use lofty::prelude::*;
 use lofty::probe::Probe;
 use player_core::lyrics::Lyrics;
 use player_core::media_paths;
+use player_core::track::{ReplayGain, TrackTags};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageKind {
@@ -45,30 +48,56 @@ impl Cover {
     fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
         ImageKind::sniff(&bytes).map(|kind| Self { kind, bytes })
     }
+
+    pub fn into_image(self) -> Arc<gpui::Image> {
+        let format = match self.kind {
+            ImageKind::Png => ImageFormat::Png,
+            ImageKind::Jpeg => ImageFormat::Jpeg,
+            ImageKind::Webp => ImageFormat::Webp,
+            ImageKind::Gif => ImageFormat::Gif,
+            ImageKind::Bmp => ImageFormat::Bmp,
+        };
+        Arc::new(gpui::Image::from_bytes(format, self.bytes))
+    }
+}
+
+/// Where a track's lyrics came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LyricsSource {
+    /// An `.lrc` file found next to the track or picked by the user.
+    File(PathBuf),
+    /// Synced lyrics stored in the track's tags.
+    Embedded,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct TrackDetails {
-    pub title: Option<String>,
-    pub artist: Option<String>,
+    pub tags: TrackTags,
     pub cover: Option<Cover>,
     pub lyrics: Lyrics,
+    pub lyrics_source: Option<LyricsSource>,
 }
 
 /// Reads tags, cover art and lyrics for the track at `path`.
 ///
 /// Cover art prefers the embedded front cover, then any embedded picture, then a sidecar
-/// image. Lyrics come from a sidecar `.lrc` file.
-pub fn read_details(path: &Path) -> TrackDetails {
+/// image. Lyrics come from `lyrics_link` (a file the user picked), a sidecar `.lrc` file,
+/// or synced lyrics embedded in the tags, in that order.
+pub fn read_details(path: &Path, lyrics_link: Option<&Path>) -> TrackDetails {
     let mut details = TrackDetails::default();
+    let mut embedded_lyrics = None;
 
     match Probe::open(path).and_then(|probe| probe.read()) {
         Ok(file) => {
+            details.tags = tags_of(&file);
             if let Some(tag) = file.primary_tag().or_else(|| file.first_tag()) {
-                details.title = non_empty(tag.title().as_deref());
-                details.artist = non_empty(tag.artist().as_deref());
                 details.cover = best_picture(tag.pictures())
                     .and_then(|picture| Cover::from_bytes(picture.data().to_vec()));
+                embedded_lyrics = tag
+                    .get_string(ItemKey::Lyrics)
+                    .or_else(|| tag.get_string(ItemKey::UnsyncLyrics))
+                    .map(Lyrics::parse)
+                    .filter(|lyrics| !lyrics.is_empty());
             }
         }
         Err(err) => log::debug!("no tags for {}: {err}", path.display()),
@@ -80,21 +109,71 @@ pub fn read_details(path: &Path) -> TrackDetails {
             .and_then(Cover::from_bytes);
     }
 
-    if let Some(lrc) = media_paths::sidecar_lyrics(path) {
+    let lrc = lyrics_link.filter(|link| link.is_file()).map(Path::to_path_buf);
+    if let Some(lrc) = lrc.or_else(|| media_paths::sidecar_lyrics(path)) {
         match std::fs::read(&lrc) {
-            Ok(bytes) => details.lyrics = Lyrics::from_bytes(&bytes),
+            Ok(bytes) => {
+                details.lyrics = Lyrics::from_bytes(&bytes);
+                details.lyrics_source = Some(LyricsSource::File(lrc));
+            }
             Err(err) => log::warn!("cannot read {}: {err}", lrc.display()),
         }
+    }
+    if details.lyrics_source.is_none()
+        && let Some(lyrics) = embedded_lyrics
+    {
+        details.lyrics = lyrics;
+        details.lyrics_source = Some(LyricsSource::Embedded);
     }
 
     details
 }
 
-/// Reads only the audio properties to get a track's duration (no cover art decoding).
-pub fn probe_duration(path: &Path) -> Option<Duration> {
-    let options = ParseOptions::new().read_cover_art(false).read_tags(false);
+/// A small square JPEG of the track's cover (embedded, or the folder's image), for grids.
+pub fn read_thumbnail(path: &Path, size: u32) -> Option<Cover> {
+    let embedded = Probe::open(path).ok().and_then(|probe| probe.read().ok()).and_then(|file| {
+        let tag = file.primary_tag().or_else(|| file.first_tag())?;
+        best_picture(tag.pictures()).map(|picture| picture.data().to_vec())
+    });
+    let bytes = embedded.or_else(|| std::fs::read(media_paths::sidecar_cover(path)?).ok())?;
+    let image = image::load_from_memory(&bytes).ok()?;
+    let thumbnail = image.resize_to_fill(size, size, image::imageops::FilterType::Triangle).into_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85).encode_image(&thumbnail).ok()?;
+    Some(Cover { kind: ImageKind::Jpeg, bytes: jpeg })
+}
+
+/// Reads tags and audio properties without decoding cover art.
+pub fn read_tags(path: &Path) -> Option<TrackTags> {
+    let options = ParseOptions::new().read_cover_art(false);
     let file = Probe::open(path).ok()?.options(options).read().ok()?;
-    Some(file.properties().duration()).filter(|duration| !duration.is_zero())
+    Some(tags_of(&file))
+}
+
+fn tags_of(file: &TaggedFile) -> TrackTags {
+    let duration = file.properties().duration();
+    let mut tags = TrackTags {
+        duration_ms: (!duration.is_zero()).then_some(duration.as_millis() as u64),
+        ..Default::default()
+    };
+    let Some(tag) = file.primary_tag().or_else(|| file.first_tag()) else {
+        return tags;
+    };
+    tags.title = non_empty(tag.title().as_deref());
+    tags.artist = non_empty(tag.artist().as_deref());
+    tags.album = non_empty(tag.album().as_deref());
+    tags.album_artist = non_empty(tag.get_string(ItemKey::AlbumArtist));
+    tags.track_number = tag.track();
+    tags.disc_number = tag.disk();
+    tags.year = tag.date().map(|date| date.year as u32);
+    let gain = |key| tag.get_string(key).and_then(ReplayGain::parse_value);
+    tags.replay_gain = ReplayGain {
+        track_gain: gain(ItemKey::ReplayGainTrackGain),
+        track_peak: gain(ItemKey::ReplayGainTrackPeak),
+        album_gain: gain(ItemKey::ReplayGainAlbumGain),
+        album_peak: gain(ItemKey::ReplayGainAlbumPeak),
+    };
+    tags
 }
 
 fn best_picture(pictures: &[Picture]) -> Option<&Picture> {
@@ -143,13 +222,21 @@ mod tests {
         let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
         std::fs::copy(examples.join("Bittersweet Chocolate.jpg"), dir.join("song.jpg")).unwrap();
 
-        let duration = probe_duration(&audio).unwrap();
-        assert!((duration.as_millis() as i64 - 1000).abs() <= 10, "{duration:?}");
+        let duration = read_tags(&audio).unwrap().duration_ms.unwrap();
+        assert!((duration as i64 - 1000).abs() <= 10, "{duration:?}");
 
-        let details = read_details(&audio);
-        assert_eq!(details.title, None);
+        let details = read_details(&audio, None);
+        assert_eq!(details.tags.title, None);
         assert_eq!(details.lyrics.lines.len(), 1);
+        assert_eq!(details.lyrics_source, Some(LyricsSource::File(dir.join("song.lrc"))));
         assert_eq!(details.cover.map(|cover| cover.kind), Some(ImageKind::Jpeg));
+        let thumbnail = read_thumbnail(&audio, 64).unwrap();
+        assert_eq!(image::load_from_memory(&thumbnail.bytes).unwrap().width(), 64);
+
+        // A linked lyrics file wins over the sidecar.
+        std::fs::write(dir.join("other.lrc"), "[00:00.50]a\n[00:01.00]b").unwrap();
+        let details = read_details(&audio, Some(&dir.join("other.lrc")));
+        assert_eq!(details.lyrics.lines.len(), 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

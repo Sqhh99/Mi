@@ -49,6 +49,11 @@ impl NativeWindow {
         HWND(self.0 as *mut _)
     }
 
+    /// The raw window handle, for system APIs tied to a window (media controls).
+    pub fn raw_handle(self) -> Option<*mut std::ffi::c_void> {
+        Some(self.0 as *mut _)
+    }
+
     /// The drawable area in physical screen coordinates.
     pub fn client_rect(self) -> Option<Rect> {
         client_rect(self.hwnd())

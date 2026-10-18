@@ -1,6 +1,7 @@
 //! Playback controls shared by the full and mini layouts.
 
 use gpui::{App, ClickEvent, Entity, IntoElement, ParentElement, Styled, Window, div, px};
+use player_core::queue::RepeatMode;
 use player_core::time::fmt_clock;
 
 use crate::model::PlayerModel;
@@ -55,7 +56,15 @@ pub fn transport(
         )
 }
 
-/// Shuffle or repeat-one toggle.
+/// The repeat button's icon for each mode (the button is highlighted unless repeat is off).
+pub fn repeat_icon(repeat: RepeatMode) -> Icon {
+    match repeat {
+        RepeatMode::One => Icon::Repeat1,
+        RepeatMode::Off | RepeatMode::All => Icon::Repeat,
+    }
+}
+
+/// Shuffle or repeat toggle.
 pub fn mode_toggle(
     id: &'static str,
     icon: Icon,

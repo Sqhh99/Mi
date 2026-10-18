@@ -13,6 +13,10 @@ impl NativeWindow {
 
     pub const SUPPORTS_PLACEMENT: bool = false;
 
+    pub fn raw_handle(self) -> Option<*mut std::ffi::c_void> {
+        None
+    }
+
     pub fn client_rect(self) -> Option<Rect> {
         None
     }

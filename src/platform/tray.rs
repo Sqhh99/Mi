@@ -1,6 +1,7 @@
 //! System tray icon and menu.
 
 use player_core::i18n::{Key, Lang, tr};
+use player_core::queue::RepeatMode;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -17,7 +18,7 @@ pub enum TrayAction {
     VolumeUp,
     VolumeDown,
     ToggleMute,
-    ToggleRepeat,
+    CycleRepeat,
     ToggleShuffle,
     Quit,
 }
@@ -31,7 +32,7 @@ pub struct TrayState {
     pub playing: bool,
     pub paused: bool,
     pub muted: bool,
-    pub repeat_one: bool,
+    pub repeat: RepeatMode,
     pub shuffle: bool,
 }
 
@@ -44,7 +45,7 @@ pub struct Tray {
     volume_up: MenuItem,
     volume_down: MenuItem,
     mute: MenuItem,
-    repeat: CheckMenuItem,
+    repeat: MenuItem,
     shuffle: CheckMenuItem,
     quit: MenuItem,
     state: Option<TrayState>,
@@ -57,7 +58,7 @@ impl Tray {
         let check = || CheckMenuItem::new("", true, false, None);
         let (window, play, previous, next) = (item(), item(), item(), item());
         let (volume_up, volume_down, mute, quit) = (item(), item(), item(), item());
-        let (repeat, shuffle) = (check(), check());
+        let (repeat, shuffle) = (item(), check());
 
         let menu = Menu::new();
         menu.append_items(&[
@@ -85,7 +86,7 @@ impl Tray {
             (volume_up.id().clone(), TrayAction::VolumeUp),
             (volume_down.id().clone(), TrayAction::VolumeDown),
             (mute.id().clone(), TrayAction::ToggleMute),
-            (repeat.id().clone(), TrayAction::ToggleRepeat),
+            (repeat.id().clone(), TrayAction::CycleRepeat),
             (shuffle.id().clone(), TrayAction::ToggleShuffle),
             (quit.id().clone(), TrayAction::Quit),
         ];
@@ -143,8 +144,11 @@ impl Tray {
         self.volume_up.set_text(t(Key::VolumeUp));
         self.volume_down.set_text(t(Key::VolumeDown));
         self.mute.set_text(t(if state.muted { Key::Unmute } else { Key::Mute }));
-        self.repeat.set_text(t(Key::RepeatOne));
-        self.repeat.set_checked(state.repeat_one);
+        self.repeat.set_text(t(match state.repeat {
+            RepeatMode::Off => Key::RepeatOff,
+            RepeatMode::All => Key::RepeatAll,
+            RepeatMode::One => Key::RepeatOne,
+        }));
         self.shuffle.set_text(t(Key::Shuffle));
         self.shuffle.set_checked(state.shuffle);
         self.quit.set_text(t(Key::Quit));
