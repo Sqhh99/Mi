@@ -15,6 +15,13 @@ pub fn fmt_duration(ms: u64) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
+/// "h:mm:ss" (or "m:ss" under an hour), used for queue and album totals.
+pub fn fmt_long_duration(ms: u64) -> String {
+    let total = ms / 1000;
+    let (hours, minutes, seconds) = (total / 3600, total / 60 % 60, total % 60);
+    if hours > 0 { format!("{hours}:{minutes:02}:{seconds:02}") } else { format!("{minutes}:{seconds:02}") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -27,5 +34,7 @@ mod tests {
         assert_eq!(fmt_duration(0), "0:00");
         assert_eq!(fmt_duration(240_000), "4:00");
         assert_eq!(fmt_duration(61_000), "1:01");
+        assert_eq!(fmt_long_duration(61_000), "1:01");
+        assert_eq!(fmt_long_duration(3_723_000), "1:02:03");
     }
 }

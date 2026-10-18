@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" fill="currentColor">
+  <!-- The app icon's kitten, peeking in from the bottom-right corner: the right and bottom
+       edges are flat so it sits flush against the window edge. -->
+  <defs>
+    <mask id="face" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+      <rect width="100" height="100" fill="#fff" />
+      <rect x="37.9" y="59.6" width="7.8" height="14.2" rx="3.9" transform="rotate(-14 41.8 66.7)" fill="#000" />
+      <rect x="77.1" y="54.2" width="7.8" height="14.2" rx="3.9" transform="rotate(-14 81 61.3)" fill="#000" />
+      <ellipse cx="63.6" cy="73.2" rx="4.8" ry="3.1" transform="rotate(-9 63.6 73.2)" fill="#000" />
+    </mask>
+  </defs>
+  <path mask="url(#face)" d="
+    M 100 100
+    L 15 100
+    C 6.5 100 0 88 0.4 72
+    C 0.8 60 6.2 52 9.2 46.5
+    C 9.9 45.2 10.1 43.8 9.8 42.4
+    L 6.6 24.5
+    C 5.4 17.6 10.6 11.2 17.4 13.2
+    C 18.4 13.5 19.4 13.9 20.3 14.5
+    L 40.6 24.6
+    C 42 25.3 43.5 25.5 45 25.1
+    C 51.4 23.2 58.2 21.6 65.2 21
+    C 66.2 20.9 67.1 20.5 67.8 19.8
+    L 86.2 3.4
+    C 90.6 -0.5 97 0.4 99.2 5.4
+    C 99.7 6.6 100 7.9 100 9.2
+    Z" />
+</svg>

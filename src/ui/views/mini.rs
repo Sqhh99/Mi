@@ -2,9 +2,10 @@
 
 use gpui::{Context, FontWeight, IntoElement, ParentElement, Styled, div, px};
 use player_core::i18n::Key;
+use player_core::queue::RepeatMode;
 
 use super::album_art::AlbumArt;
-use super::controls::{mode_toggle, player_action, progress, transport};
+use super::controls::{mode_toggle, player_action, progress, repeat_icon, transport};
 use super::root::MainView;
 use crate::model::PlayerModel;
 use crate::ui::icons::Icon;
@@ -16,7 +17,7 @@ impl MainView {
         let theme = cx.global::<Theme>().clone();
         let player = self.player.read(cx);
         let playing = player.is_playing();
-        let (repeat_one, shuffle) = (player.repeat_one(), player.shuffle());
+        let (repeat, shuffle) = (player.repeat(), player.shuffle());
         let track = player.track().cloned();
         let title =
             track.as_ref().map_or_else(|| t(cx, Key::NoSongSelected).into(), |track| track.title.clone());
@@ -75,13 +76,13 @@ impl MainView {
                     .child(
                         mode_toggle(
                             "mini-repeat",
-                            if repeat_one { Icon::Repeat1 } else { Icon::Repeat },
-                            repeat_one,
+                            repeat_icon(repeat),
+                            repeat != RepeatMode::Off,
                             26.0,
                             14.0,
                             cx,
                         )
-                        .on_click(player_action(&self.player, PlayerModel::toggle_repeat_one)),
+                        .on_click(player_action(&self.player, PlayerModel::cycle_repeat)),
                     ),
             );
 

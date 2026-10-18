@@ -5,30 +5,37 @@ use gpui::{
     Window, div, prelude::FluentBuilder, px, svg,
 };
 use player_core::i18n::Key;
+use player_core::queue::RepeatMode;
 
 use super::album_art::AlbumArt;
-use super::controls::{mode_toggle, player_action, progress, transport, volume};
-use super::root::MainView;
+use super::controls::{mode_toggle, player_action, progress, repeat_icon, transport, volume};
+use super::root::{MainView, Sheet};
 use crate::model::PlayerModel;
 use crate::ui::icons::Icon;
 use crate::ui::t;
 use crate::ui::theme::{Theme, metrics};
+use crate::ui::widgets::IconButton;
 
 impl MainView {
     pub(super) fn render_full(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>().clone();
         let player = self.player.read(cx);
         let playing = player.is_playing();
-        let (repeat_one, shuffle) = (player.repeat_one(), player.shuffle());
+        let (repeat, shuffle) = (player.repeat(), player.shuffle());
         let track = player.track().cloned();
         let lyrics = self.lyrics_anim.value();
 
         let title =
             track.as_ref().map_or_else(|| t(cx, Key::NoSongSelected).into(), |track| track.title.clone());
-        let artist = track
-            .as_ref()
-            .and_then(|track| track.artist.clone())
-            .unwrap_or_else(|| t(cx, Key::LocalMusic).into());
+        let artist = track.as_ref().map_or_else(
+            || t(cx, Key::LocalMusic).to_string(),
+            |track| {
+                let parts: Vec<&str> =
+                    [&track.artist, &track.album].into_iter().flatten().map(|part| part.as_ref()).collect();
+                if parts.is_empty() { t(cx, Key::LocalMusic).to_string() } else { parts.join(" · ") }
+            },
+        );
+        let favorite = self.is_current_favorite(cx);
 
         let album_column = div()
             .flex_none()
@@ -56,11 +63,31 @@ impl MainView {
             .pr(px(metrics::HEADER_INSET))
             .child(
                 div()
-                    .truncate()
-                    .text_size(px(metrics::TITLE_SIZE))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_primary)
-                    .child(title),
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(metrics::TITLE_SIZE))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.text_primary)
+                            .child(title),
+                    )
+                    .when(track.is_some(), |el| {
+                        el.child(
+                            IconButton::new(
+                                "favorite",
+                                if favorite { Icon::HeartFilled } else { Icon::Heart },
+                            )
+                            .size(32.0, 17.0)
+                            .active(favorite)
+                            .hover_bg(theme.hover_bg)
+                            .icon_opacity(theme.icon_muted_opacity)
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_favorite(cx))),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -96,15 +123,8 @@ impl MainView {
                             .on_click(player_action(&self.player, PlayerModel::toggle_shuffle)),
                     )
                     .child(
-                        mode_toggle(
-                            "repeat",
-                            if repeat_one { Icon::Repeat1 } else { Icon::Repeat },
-                            repeat_one,
-                            34.0,
-                            16.0,
-                            cx,
-                        )
-                        .on_click(player_action(&self.player, PlayerModel::toggle_repeat_one)),
+                        mode_toggle("repeat", repeat_icon(repeat), repeat != RepeatMode::Off, 34.0, 16.0, cx)
+                            .on_click(player_action(&self.player, PlayerModel::cycle_repeat)),
                     ),
             );
 
@@ -136,36 +156,43 @@ impl MainView {
                 el.child(div().absolute().size_full().opacity(lyrics).child(self.lyrics.clone()))
             });
 
-        let playlist_open = self.playlist_open;
-        let playlist_button = div()
-            .id("playlist-button")
-            .h(px(36.0))
-            .px(px(10.0))
+        let sheet_button = |id: &'static str, sheet: Sheet, icon: Icon, label: &'static str| {
+            let open = self.sheet == Some(sheet);
+            div()
+                .id(id)
+                .h(px(36.0))
+                .px(px(10.0))
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .rounded(px(12.0))
+                .border_1()
+                .border_color(theme.button_border)
+                .cursor_pointer()
+                .map(|el| {
+                    if open {
+                        el.bg(theme.button_active_bg)
+                    } else {
+                        el.bg(theme.button_bg)
+                            .hover(|s| s.bg(theme.button_hover_bg))
+                            .active(|s| s.bg(theme.button_pressed_bg))
+                    }
+                })
+                .on_click(cx.listener(move |this, _, window, cx| this.toggle_sheet(sheet, window, cx)))
+                .child(svg().path(icon.path()).size(px(16.0)).text_color(theme.icon.opacity(0.78)))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text_secondary)
+                        .child(label),
+                )
+        };
+        let sheet_buttons = div()
             .flex()
-            .items_center()
-            .gap(px(8.0))
-            .rounded(px(12.0))
-            .border_1()
-            .border_color(theme.button_border)
-            .cursor_pointer()
-            .map(|el| {
-                if playlist_open {
-                    el.bg(theme.button_active_bg)
-                } else {
-                    el.bg(theme.button_bg)
-                        .hover(|s| s.bg(theme.button_hover_bg))
-                        .active(|s| s.bg(theme.button_pressed_bg))
-                }
-            })
-            .on_click(cx.listener(move |this, _, _, cx| this.set_playlist_open(!playlist_open, cx)))
-            .child(svg().path(Icon::ListMusic.path()).size(px(16.0)).text_color(theme.icon.opacity(0.78)))
-            .child(
-                div()
-                    .text_size(px(12.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_secondary)
-                    .child(t(cx, Key::Playlist)),
-            );
+            .gap(px(10.0))
+            .child(sheet_button("playlist-button", Sheet::Queue, Icon::ListMusic, t(cx, Key::Playlist)))
+            .child(sheet_button("library-button", Sheet::Library, Icon::Library, t(cx, Key::Library)));
 
         let bottom_bar = div()
             .flex_none()
@@ -173,7 +200,7 @@ impl MainView {
             .flex()
             .items_center()
             .justify_between()
-            .child(playlist_button)
+            .child(sheet_buttons)
             .child(volume(&self.player, cx));
 
         let details_column =

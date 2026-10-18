@@ -8,12 +8,20 @@ use regex::Regex;
 static TIME_TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[(\d+):(\d+)(?:\.(\d+))?\]").expect("valid regex"));
 static META_TAG: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[(ti|ar|al|id):([^\]]*)\]").expect("valid regex"));
+    LazyLock::new(|| Regex::new(r"^\[(ti|ar|al|id|offset):([^\]]*)\]").expect("valid regex"));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LyricLine {
     pub time_ms: u64,
     pub text: String,
+    /// Further lines with the same timestamp, usually a translation or romanization.
+    pub translation: Option<String>,
+}
+
+impl LyricLine {
+    pub fn new(time_ms: u64, text: impl Into<String>) -> Self {
+        Self { time_ms, text: text.into(), translation: None }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -21,6 +29,8 @@ pub struct Lyrics {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    /// The file's `[offset:]` in milliseconds (already applied to the line times).
+    pub offset_ms: i64,
     pub lines: Vec<LyricLine>,
 }
 
@@ -35,9 +45,39 @@ impl Lyrics {
         for line in content.split(['\r', '\n']).map(str::trim).filter(|l| !l.is_empty()) {
             lyrics.parse_line(line);
         }
+        // A positive offset makes the lyrics appear sooner.
+        if lyrics.offset_ms != 0 {
+            for line in &mut lyrics.lines {
+                line.time_ms = (line.time_ms as i64 - lyrics.offset_ms).max(0) as u64;
+            }
+        }
         // Stable sort keeps file order for lines sharing a timestamp.
         lyrics.lines.sort_by_key(|line| line.time_ms);
+        lyrics.group_simultaneous_lines();
         lyrics
+    }
+
+    /// Folds lines that share a timestamp into the first one, as its translation.
+    fn group_simultaneous_lines(&mut self) {
+        let mut grouped: Vec<LyricLine> = Vec::with_capacity(self.lines.len());
+        for line in std::mem::take(&mut self.lines) {
+            match grouped.last_mut() {
+                Some(previous) if previous.time_ms == line.time_ms => {
+                    if previous.text == line.text || previous.translation.as_deref() == Some(&line.text) {
+                        continue;
+                    }
+                    match &mut previous.translation {
+                        Some(translation) => {
+                            translation.push('\n');
+                            translation.push_str(&line.text);
+                        }
+                        None => previous.translation = Some(line.text),
+                    }
+                }
+                _ => grouped.push(line),
+            }
+        }
+        self.lines = grouped;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -56,6 +96,7 @@ impl Lyrics {
                 "ti" => self.title = Some(value),
                 "ar" => self.artist = Some(value),
                 "al" => self.album = Some(value),
+                "offset" => self.offset_ms = value.trim_start_matches('+').parse().unwrap_or(0),
                 _ => {}
             }
             return;
@@ -75,8 +116,7 @@ impl Lyrics {
             return;
         }
         // A line may carry several timestamps ("[00:10][01:20]chorus").
-        self.lines
-            .extend(timestamps.into_iter().map(|time_ms| LyricLine { time_ms, text: text.to_string() }));
+        self.lines.extend(timestamps.into_iter().map(|time_ms| LyricLine::new(time_ms, text)));
     }
 }
 
@@ -148,13 +188,7 @@ mod tests {
         assert_eq!(lyrics.title.as_deref(), Some("Song"));
         assert_eq!(lyrics.artist.as_deref(), Some("Artist"));
         assert_eq!(lyrics.album.as_deref(), Some("Album"));
-        assert_eq!(
-            lyrics.lines,
-            vec![
-                LyricLine { time_ms: 1500, text: "first".into() },
-                LyricLine { time_ms: 3000, text: "second".into() },
-            ]
-        );
+        assert_eq!(lyrics.lines, vec![LyricLine::new(1500, "first"), LyricLine::new(3000, "second"),]);
     }
 
     #[test]
@@ -173,8 +207,29 @@ mod tests {
 
     #[test]
     fn skips_empty_and_untimed_lines() {
-        let lyrics = Lyrics::parse("[00:01.00]\nplain text\n[offset:100]\n[00:02.00]  kept  ");
-        assert_eq!(lyrics.lines, vec![LyricLine { time_ms: 2000, text: "kept".into() }]);
+        let lyrics = Lyrics::parse("[00:01.00]\nplain text\n[00:02.00]  kept  ");
+        assert_eq!(lyrics.lines, vec![LyricLine::new(2000, "kept")]);
+    }
+
+    #[test]
+    fn applies_offset_tag() {
+        let lyrics = Lyrics::parse("[offset:+500]\n[00:00.20]a\n[00:02.00]b");
+        assert_eq!(lyrics.offset_ms, 500);
+        let times: Vec<_> = lyrics.lines.iter().map(|l| l.time_ms).collect();
+        assert_eq!(times, vec![0, 1500]);
+        let later = Lyrics::parse("[offset:-250]\n[00:01.00]a");
+        assert_eq!(later.lines[0].time_ms, 1250);
+    }
+
+    #[test]
+    fn groups_translations_with_the_same_timestamp() {
+        let lyrics = Lyrics::parse(
+            "[00:01.00]I love you\n[00:01.00]我爱你\n[00:01.00]我爱你\n[00:03.00]solo\n[00:01.00]wo ai ni",
+        );
+        assert_eq!(lyrics.lines.len(), 2);
+        assert_eq!(lyrics.lines[0].text, "I love you");
+        assert_eq!(lyrics.lines[0].translation.as_deref(), Some("我爱你\nwo ai ni"));
+        assert_eq!(lyrics.lines[1].translation, None);
     }
 
     #[test]

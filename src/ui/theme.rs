@@ -32,6 +32,8 @@ pub struct Theme {
     pub surface_bottom_tint: Hsla,
     pub surface_glow_blue: Hsla,
     pub surface_glow_rose: Hsla,
+    /// The corner kitten: white at night, black by day, kept faint.
+    pub kitten: Hsla,
 
     // Dynamic island
     pub island_bg: Hsla,
@@ -121,6 +123,8 @@ impl Theme {
             } else {
                 transparent
             },
+
+            kitten: pick(rgba(255, 255, 255, 0.11), rgba(0, 0, 0, 0.075)),
 
             island_bg: pick(rgba(12, 12, 14, 0.80 + 0.12 * m), rgba(248, 248, 249, 0.88 + 0.08 * m)),
             island_highlight: pick(
@@ -212,4 +216,10 @@ pub mod metrics {
     pub const PROGRESS_HEIGHT_MINI: f32 = 5.0;
     pub const BOTTOM_BAR_HEIGHT: f32 = 36.0;
     pub const DRAG_HEIGHT: f32 = 48.0;
+
+    pub const KITTEN_SIZE: f32 = 60.0;
+    pub const KITTEN_SIZE_MINI: f32 = 36.0;
+    pub const KITTEN_SIZE_ISLAND: f32 = 16.0;
+    /// The island's kitten sits on the straight part of the pill's bottom edge.
+    pub const KITTEN_ISLAND_RIGHT: f32 = 22.0;
 }
